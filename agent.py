@@ -2,7 +2,8 @@ import json
 import os
 import urllib.request
 import urllib.error
-
+import shlex
+import subprocess
 
 # ============================================================
 # SAFETY: the agent may only touch files inside this folder
@@ -19,6 +20,32 @@ def is_inside_workspace(path):
 # ============================================================
 # TOOLS: the things the agent can do
 # ============================================================
+
+ALLOWED_COMMANDS = ["ls", "cat", "pwd", "grep", "wc", "head", "tail"]
+ALLOWED_GIT = ["git status", "git diff", "git log --oneline"]
+
+def run_shell(command):
+    try:
+        parts = shlex.split(command)
+    except ValueError as e:
+        return f"ERROR: CANNOT READ COMMAND"
+    if parts == []:
+        return "ERROR: The command is empty"
+    if parts[0] == "git":
+        if " ".join(parts) not in ALLOWED_GIT:
+            return "ERROR: only git status, git diff and git log --oneline are allowed"
+    elif parts[0] not in ALLOWED_COMMANDS:
+        return f"ERROR: {parts[0]} is not an allowed command"
+
+    try:
+       completed = subprocess.run(parts, cwd=WORKSPACE, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+         return "ERROR: the command took longer than 10 seconds"
+    except OSError as e:
+        return f"ERROR: {e}"
+    return f"exit code {completed.returncode}\n{completed.stdout}{completed.stderr}"
+
+
 
 def list_files(path):
     try:
@@ -54,6 +81,7 @@ def write_file(path, content):
 TOOLS = {
     "list_files": list_files,
     "read_files": read_files,
+    "run_shell": run_shell
 }
 
 
@@ -73,11 +101,14 @@ If the task is about a file, you MUST use a tool first. Never guess what a file 
 list_files: lists the files in a folder. arg is the folder, like "."
 read_files: reads a file. arg is the name of the file to read
 write_file: writes a file. arg is the file name and content is the text to write
+run_shell: runs a terminal command. arg is the command, like "ls" or "cat notes.txt". Only ls, cat, pwd, grep, wc, head, tail, git status, git diff and git log --oneline are allowed
 
 Always reply with one JSON object. To use a tool:
 {"tool": "read_files", "arg": "notes.txt"}
 {"tool": "write_file", "arg": "hello.txt", "content": "hi"}
-After you get the tool result, give your final answer in "done", based only on the tool result.
+{"tool": "run_shell", "arg": "wc -l agent.py"}
+Never write a file unless the user asks you to write or create one.
+After you get the tool result, answer the user right away in "done", based only on the tool result.
 """
 
 
@@ -104,10 +135,11 @@ def history_to_messages(history):
 
 def ask_model(messages):
     data = {
-        "model": "qwen2.5:1.5b",
+        "model": "qwen2.5:3b",
         "messages": messages,
         "stream": False,
         "format": "json",
+        "options": {"temperature": 0},
     }
     request = urllib.request.Request(
         "http://localhost:11434/api/chat",
@@ -164,7 +196,7 @@ def run_agent(task, max_turns):
         arg = decision["arg"]
 
         if name == "write_file":
-            if "content" in decision:
+            if "content" in decision :
 
                 result = write_file(arg, decision.get("content", " "))
             else:
