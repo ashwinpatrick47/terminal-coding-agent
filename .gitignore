@@ -1,0 +1,4 @@
+01-terminal-native-coding-agent/
+*.txt
+.DS_Store
+__pycache__/
